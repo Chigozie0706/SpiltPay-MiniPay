@@ -1,5 +1,5 @@
 import { ArrowRight, CheckCircle, Clock } from "lucide-react";
-import { Bill } from "../App";
+import { Bill } from "./App";
 
 interface BillCardProps {
   bill: Bill;
