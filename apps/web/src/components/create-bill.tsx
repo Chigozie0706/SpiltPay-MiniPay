@@ -1,6 +1,13 @@
 import { useState } from "react";
 import { ArrowLeft, Plus, X, Users } from "lucide-react";
 import { Bill, Currency } from "./App";
+import {
+  useAccount,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from "wagmi";
+import { parseUnits, Address } from "viem";
+import contractABI from "../contract/abi.json";
 
 interface CreateBillProps {
   onBack: () => void;
@@ -11,22 +18,52 @@ interface ParticipantInput {
   id: string;
   name: string;
   phoneNumber: string;
+  wallet: string;
   share: number;
 }
+
+// Mento Stablecoin addresses on Celo Mainnet
+const STABLECOIN_ADDRESSES: Record<Currency, Address> = {
+  cUSD: "0x765DE816845861e75A25fCA122bb6898B8B1282a",
+  cKES: "0x456a3D042C0DbD3db53D5489e98dFb038553B0d0",
+  cREAL: "0xe8537a3d056DA446677B9E9d6c5dB704EaAb4787",
+  cEUR: "0xD8763CBa276a3738E6DE85b4b3bF5FDed6D6cA73",
+};
+
+const CONTRACT_ADDRESS: Address = "0x374523992a926751c642cC81159B45A6BB12053f";
 
 export function CreateBill({ onBack, onCreate }: CreateBillProps) {
   const [title, setTitle] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [currency, setCurrency] = useState<Currency>("cUSD");
   const [participants, setParticipants] = useState<ParticipantInput[]>([
-    { id: "1", name: "", phoneNumber: "", share: 0 },
+    { id: "1", name: "", phoneNumber: "", wallet: "", share: 0 },
   ]);
   const [splitMethod, setSplitMethod] = useState<"equal" | "manual">("equal");
+  const [error, setError] = useState("");
+
+  // Wagmi hooks
+  const { address, isConnected } = useAccount();
+  const {
+    writeContract,
+    data: hash,
+    isPending,
+    error: writeError,
+  } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash,
+  });
 
   const addParticipant = () => {
     setParticipants([
       ...participants,
-      { id: Date.now().toString(), name: "", phoneNumber: "", share: 0 },
+      {
+        id: Date.now().toString(),
+        name: "",
+        phoneNumber: "",
+        wallet: "",
+        share: 0,
+      },
     ]);
   };
 
@@ -56,17 +93,94 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
     }
   };
 
-  const handleCreate = () => {
-    if (!title || !totalAmount || participants.some((p) => !p.name)) {
-      alert("Please fill in all required fields");
-      return;
+  // const handleCreate = () => {
+  //   if (!title || !totalAmount || participants.some((p) => !p.name)) {
+  //     alert("Please fill in all required fields");
+  //     return;
+  //   }
+
+  //   const amount = parseFloat(totalAmount);
+  //   if (isNaN(amount) || amount <= 0) {
+  //     alert("Please enter a valid amount");
+  //     return;
+  //   }
+
+  //   // Calculate shares if not done yet
+  //   let finalParticipants = participants;
+  //   if (splitMethod === "equal") {
+  //     const sharePerPerson = amount / participants.length;
+  //     finalParticipants = participants.map((p) => ({
+  //       ...p,
+  //       share: sharePerPerson,
+  //     }));
+  //   }
+
+  //   const totalShares = finalParticipants.reduce((sum, p) => sum + p.share, 0);
+  //   if (Math.abs(totalShares - amount) > 0.01) {
+  //     alert("Total shares must equal the total amount");
+  //     return;
+  //   }
+
+  //   onCreate({
+  //     title,
+  //     totalAmount: amount,
+  //     currency,
+  //     organizerId: "user1",
+  //     organizerName: "You",
+  //     status: "active",
+  //     participants: finalParticipants.map((p) => ({
+  //       ...p,
+  //       amountPaid: 0,
+  //       status: "pending" as const,
+  //     })),
+  //   });
+  // };
+
+  const validateForm = () => {
+    if (!isConnected) {
+      setError("Please connect your wallet first");
+      return false;
+    }
+
+    if (!title || !totalAmount) {
+      setError("Please fill in bill title and amount");
+      return false;
     }
 
     const amount = parseFloat(totalAmount);
     if (isNaN(amount) || amount <= 0) {
-      alert("Please enter a valid amount");
+      setError("Please enter a valid amount");
+      return false;
+    }
+
+    if (participants.some((p) => !p.name)) {
+      setError("Please enter names for all participants");
+      return false;
+    }
+
+    // Validate wallet addresses
+    for (const p of participants) {
+      if (!p.wallet) {
+        setError(`Please enter wallet address for ${p.name}`);
+        return false;
+      }
+      if (!p.wallet.startsWith("0x") || p.wallet.length !== 42) {
+        setError(`Invalid wallet address for ${p.name}`);
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const handleCreate = async () => {
+    setError("");
+
+    if (!validateForm()) {
       return;
     }
+
+    const amount = parseFloat(totalAmount);
 
     // Calculate shares if not done yet
     let finalParticipants = participants;
@@ -80,24 +194,54 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
 
     const totalShares = finalParticipants.reduce((sum, p) => sum + p.share, 0);
     if (Math.abs(totalShares - amount) > 0.01) {
-      alert("Total shares must equal the total amount");
+      setError("Total shares must equal the total amount");
       return;
     }
 
-    onCreate({
-      title,
-      totalAmount: amount,
-      currency,
-      organizerId: "user1",
-      organizerName: "You",
-      status: "active",
-      participants: finalParticipants.map((p) => ({
-        ...p,
-        amountPaid: 0,
-        status: "pending" as const,
-      })),
-    });
+    try {
+      // Prepare contract parameters
+      const stablecoinAddress = STABLECOIN_ADDRESSES[currency];
+      const totalAmountWei = parseUnits(amount.toString(), 18);
+
+      const participantsData = finalParticipants.map((p) => ({
+        wallet: p.wallet as Address,
+        share: parseUnits(p.share.toString(), 18),
+        name: p.name,
+        phoneNumber: p.phoneNumber || "",
+      }));
+
+      // Call the contract
+      writeContract({
+        address: CONTRACT_ADDRESS,
+        abi: contractABI.abi,
+        functionName: "createBill",
+        args: [title, totalAmountWei, stablecoinAddress, participantsData],
+      });
+    } catch (err: any) {
+      console.error("Error creating bill:", err);
+      setError(err.message || "Failed to create bill. Please try again.");
+    }
   };
+
+  // Handle transaction success
+  if (isSuccess && hash) {
+    // You can parse the transaction receipt to get the bill ID from events
+    // For now, showing success message
+    setTimeout(() => {
+      alert("Bill created successfully!");
+      onBack();
+    }, 1000);
+  }
+
+  // Handle write error
+  if (writeError) {
+    const errorMessage = writeError.message || "Transaction failed";
+    if (error !== errorMessage) {
+      setError(errorMessage);
+    }
+  }
+
+  const isProcessing = isPending || isConfirming;
 
   return (
     <div className="min-h-screen pb-20">
@@ -279,6 +423,21 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
                     placeholder="Name"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-sm"
                   />
+
+                  <input
+                    type="text"
+                    value={participant.wallet}
+                    onChange={(e) =>
+                      updateParticipant(
+                        participant.id,
+                        "wallet",
+                        e.target.value
+                      )
+                    }
+                    placeholder="Address"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-sm"
+                  />
+
                   <input
                     type="tel"
                     value={participant.phoneNumber}

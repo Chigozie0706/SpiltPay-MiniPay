@@ -1,6 +1,7 @@
 import { Plus, ArrowRight } from "lucide-react";
 import { Bill } from "./App";
 import { BillCard } from "./bill-card";
+import Link from "next/link";
 
 interface HomeScreenProps {
   bills: Bill[];
@@ -39,21 +40,26 @@ export function HomeScreen({
       <div className="max-w-2xl mx-auto px-4 sm:px-6 -mt-16 sm:-mt-20">
         {/* Create Bill Button */}
         <button
-          onClick={onCreateBill}
+          // onClick={onCreateBill}
           className="w-full bg-white rounded-2xl shadow-lg p-6 mb-6 flex items-center justify-between hover:shadow-xl transition-shadow"
         >
-          <div className="flex items-center gap-4">
-            <div className="bg-emerald-100 p-3 rounded-full">
-              <Plus className="w-6 h-6 text-emerald-600" />
-            </div>
-            <div className="text-left">
-              <div className="text-gray-900 mb-0.5">Create New Bill</div>
-              <div className="text-gray-500 text-sm">
-                Split expenses with friends
+          <Link
+            href="/create_bill"
+            className="text-orange-500 text-xl font-bold"
+          >
+            <div className="flex items-center gap-4">
+              <div className="bg-emerald-100 p-3 rounded-full">
+                <Plus className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div className="text-left">
+                <div className="text-gray-900 mb-0.5">Create New Bill</div>
+                <div className="text-gray-500 text-sm">
+                  Split expenses with friends
+                </div>
               </div>
             </div>
-          </div>
-          <ArrowRight className="w-5 h-5 text-gray-400" />
+            <ArrowRight className="w-5 h-5 text-gray-400" />
+          </Link>
         </button>
 
         {/* Active Bills */}
