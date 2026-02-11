@@ -1,7 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import { ArrowLeft, Plus, X, Users } from "lucide-react";
+import { useState, useEffect } from "react";
+import {
+  ArrowLeft,
+  Plus,
+  X,
+  Users,
+  Wallet,
+  Phone,
+  AlertCircle,
+  CheckCircle,
+  Loader2,
+} from "lucide-react";
 import { Bill, Currency } from "./homepage";
 import {
   useAccount,
@@ -43,6 +53,7 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
   ]);
   const [splitMethod, setSplitMethod] = useState<"equal" | "manual">("equal");
   const [error, setError] = useState("");
+  const [showSuccess, setShowSuccess] = useState(false);
 
   // Wagmi hooks
   const { address, isConnected } = useAccount();
@@ -67,6 +78,25 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
         share: 0,
       },
     ]);
+  };
+
+  // Add this function near the top of your component
+  const handleBack = () => {
+    // Check if there's unsaved data
+    const hasUnsavedData =
+      title || totalAmount || participants.some((p) => p.name || p.wallet);
+
+    if (hasUnsavedData && !isProcessing) {
+      // Show confirmation dialog
+      const confirmed = window.confirm(
+        "You have unsaved changes. Are you sure you want to go back?",
+      );
+      if (confirmed) {
+        onBack();
+      }
+    } else {
+      onBack();
+    }
   };
 
   const removeParticipant = (id: string) => {
@@ -95,48 +125,12 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
     }
   };
 
-  // const handleCreate = () => {
-  //   if (!title || !totalAmount || participants.some((p) => !p.name)) {
-  //     alert("Please fill in all required fields");
-  //     return;
-  //   }
-
-  //   const amount = parseFloat(totalAmount);
-  //   if (isNaN(amount) || amount <= 0) {
-  //     alert("Please enter a valid amount");
-  //     return;
-  //   }
-
-  //   // Calculate shares if not done yet
-  //   let finalParticipants = participants;
-  //   if (splitMethod === "equal") {
-  //     const sharePerPerson = amount / participants.length;
-  //     finalParticipants = participants.map((p) => ({
-  //       ...p,
-  //       share: sharePerPerson,
-  //     }));
-  //   }
-
-  //   const totalShares = finalParticipants.reduce((sum, p) => sum + p.share, 0);
-  //   if (Math.abs(totalShares - amount) > 0.01) {
-  //     alert("Total shares must equal the total amount");
-  //     return;
-  //   }
-
-  //   onCreate({
-  //     title,
-  //     totalAmount: amount,
-  //     currency,
-  //     organizerId: "user1",
-  //     organizerName: "You",
-  //     status: "active",
-  //     participants: finalParticipants.map((p) => ({
-  //       ...p,
-  //       amountPaid: 0,
-  //       status: "pending" as const,
-  //     })),
-  //   });
-  // };
+  // Auto-calculate shares when amount or split method changes
+  useEffect(() => {
+    if (splitMethod === "equal" && totalAmount) {
+      calculateShares();
+    }
+  }, [totalAmount, participants.length, splitMethod]);
 
   const validateForm = () => {
     if (!isConnected) {
@@ -144,30 +138,51 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
       return false;
     }
 
-    if (!title || !totalAmount) {
-      setError("Please fill in bill title and amount");
+    if (!title.trim()) {
+      setError("Please enter a bill title");
+      return false;
+    }
+
+    if (!totalAmount) {
+      setError("Please enter the total amount");
       return false;
     }
 
     const amount = parseFloat(totalAmount);
     if (isNaN(amount) || amount <= 0) {
-      setError("Please enter a valid amount");
+      setError("Please enter a valid amount greater than 0");
       return false;
     }
 
-    if (participants.some((p) => !p.name)) {
+    if (participants.some((p) => !p.name.trim())) {
       setError("Please enter names for all participants");
       return false;
     }
 
     // Validate wallet addresses
     for (const p of participants) {
-      if (!p.wallet) {
+      if (!p.wallet.trim()) {
         setError(`Please enter wallet address for ${p.name}`);
         return false;
       }
       if (!p.wallet.startsWith("0x") || p.wallet.length !== 42) {
         setError(`Invalid wallet address for ${p.name}`);
+        return false;
+      }
+    }
+
+    // Validate shares for manual split
+    if (splitMethod === "manual") {
+      const totalShares = participants.reduce(
+        (sum, p) => sum + (p.share || 0),
+        0,
+      );
+      if (Math.abs(totalShares - amount) > 0.01) {
+        setError(
+          `Total shares (${totalShares.toFixed(
+            2,
+          )}) must equal total amount (${amount.toFixed(2)})`,
+        );
         return false;
       }
     }
@@ -192,12 +207,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
         ...p,
         share: sharePerPerson,
       }));
-    }
-
-    const totalShares = finalParticipants.reduce((sum, p) => sum + p.share, 0);
-    if (Math.abs(totalShares - amount) > 0.01) {
-      setError("Total shares must equal the total amount");
-      return;
     }
 
     try {
@@ -226,95 +235,172 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
   };
 
   // Handle transaction success
-  if (isSuccess && hash) {
-    // You can parse the transaction receipt to get the bill ID from events
-    // For now, showing success message
-    setTimeout(() => {
-      alert("Bill created successfully!");
-      onBack();
-    }, 1000);
-  }
+  useEffect(() => {
+    if (isSuccess && hash) {
+      setShowSuccess(true);
+      setTimeout(() => {
+        onBack();
+      }, 2000);
+    }
+  }, [isSuccess, hash]);
 
   // Handle write error
-  if (writeError) {
-    const errorMessage = writeError.message || "Transaction failed";
-    if (error !== errorMessage) {
+  useEffect(() => {
+    if (writeError) {
+      const errorMessage = writeError.message || "Transaction failed";
       setError(errorMessage);
     }
-  }
+  }, [writeError]);
 
   const isProcessing = isPending || isConfirming;
+  const canSubmit =
+    title &&
+    totalAmount &&
+    participants.every((p) => p.name && p.wallet) &&
+    !isProcessing;
 
   return (
-    <div className="min-h-screen pb-20">
+    <>
+      {/* <div className="min-h-screen bg-gray-50"> */}
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center gap-4">
             <button
-              onClick={onBack}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors -ml-2"
+              onClick={handleBack}
+              disabled={isProcessing}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors -ml-2 disabled:opacity-50"
             >
               <ArrowLeft className="w-5 h-5 text-gray-700" />
             </button>
-            <div>
-              <h1 className="text-gray-900 text-lg">Create New Bill</h1>
+            <div className="flex-1">
+              <h1 className="text-gray-900 text-lg font-semibold">
+                Create New Bill
+              </h1>
               <p className="text-gray-500 text-sm">
                 Split expenses with friends
               </p>
             </div>
+            {!isConnected && (
+              <div className="bg-orange-100 text-orange-800 text-xs px-3 py-1 rounded-full">
+                Not connected
+              </div>
+            )}
           </div>
         </div>
       </div>
 
+      {/* Success Modal */}
+      {showSuccess && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center animate-scale-in">
+            <div className="bg-emerald-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-8 h-8 text-emerald-600" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              Bill Created!
+            </h2>
+            <p className="text-gray-600 mb-4">
+              Your bill has been created successfully
+            </p>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-sm text-gray-600 mb-1">Transaction Hash:</p>
+              <p className="text-xs font-mono text-gray-900 break-all">
+                {hash?.substring(0, 10)}...{hash?.substring(hash.length - 8)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Processing Overlay */}
+      {isProcessing && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40 p-4">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center">
+            <Loader2 className="w-12 h-12 text-emerald-600 animate-spin mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              {isPending ? "Confirm in wallet..." : "Processing transaction..."}
+            </h3>
+            <p className="text-sm text-gray-600">
+              {isPending
+                ? "Please confirm the transaction in your wallet"
+                : "Waiting for blockchain confirmation..."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Form */}
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-6">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+        {/* Error Alert */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-red-800 text-sm font-medium">Error</p>
+              <p className="text-red-700 text-sm mt-1">{error}</p>
+            </div>
+            <button
+              onClick={() => setError("")}
+              className="text-red-400 hover:text-red-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* Bill Details */}
-        <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6 mb-4">
-          <h2 className="text-gray-900 mb-4">Bill Details</h2>
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h2 className="text-gray-900 font-semibold mb-4 flex items-center gap-2">
+            <span className="text-emerald-600">📝</span>
+            Bill Details
+          </h2>
 
           <div className="space-y-4">
             <div>
-              <label className="block text-gray-700 text-sm mb-2">
-                Bill Title
+              <label className="block text-gray-700 text-sm font-medium mb-2">
+                Bill Title *
               </label>
               <input
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g., Dinner at KFC"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                disabled={isProcessing}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-gray-700 text-sm mb-2">
-                  Total Amount
+                <label className="block text-gray-700 text-sm font-medium mb-2">
+                  Total Amount *
                 </label>
                 <input
                   type="number"
                   value={totalAmount}
                   onChange={(e) => setTotalAmount(e.target.value)}
-                  onBlur={calculateShares}
                   placeholder="0.00"
                   step="0.01"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  min="0"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  disabled={isProcessing}
                 />
               </div>
               <div>
-                <label className="block text-gray-700 text-sm mb-2">
-                  Currency
+                <label className="block text-gray-700 text-sm font-medium mb-2">
+                  Currency *
                 </label>
                 <select
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value as Currency)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all bg-white"
+                  disabled={isProcessing}
                 >
-                  <option value="cUSD">cUSD</option>
-                  <option value="cKES">cKES</option>
-                  <option value="cREAL">cREAL</option>
-                  <option value="cEUR">cEUR</option>
+                  <option value="cUSD">cUSD 💵</option>
+                  <option value="cKES">cKES 🇰🇪</option>
+                  <option value="cREAL">cREAL 🇧🇷</option>
+                  <option value="cEUR">cEUR 🇪🇺</option>
                 </select>
               </div>
             </div>
@@ -322,53 +408,56 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
         </div>
 
         {/* Split Method */}
-        <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6 mb-4">
-          <h2 className="text-gray-900 mb-4">Split Method</h2>
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h2 className="text-gray-900 font-semibold mb-4 flex items-center gap-2">
+            <span className="text-emerald-600">⚖️</span>
+            Split Method
+          </h2>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-4">
             <button
-              onClick={() => {
-                setSplitMethod("equal");
-                calculateShares();
-              }}
-              className={`p-4 rounded-lg border-2 transition-all ${
+              onClick={() => setSplitMethod("equal")}
+              disabled={isProcessing}
+              className={`p-4 rounded-xl border-2 transition-all ${
                 splitMethod === "equal"
-                  ? "border-emerald-500 bg-emerald-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
+                  ? "border-emerald-500 bg-emerald-50 shadow-md"
+                  : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+              } disabled:opacity-50`}
             >
               <Users
-                className={`w-5 h-5 mx-auto mb-2 ${
+                className={`w-6 h-6 mx-auto mb-2 ${
                   splitMethod === "equal" ? "text-emerald-600" : "text-gray-400"
                 }`}
               />
               <div
-                className={`text-sm ${
+                className={`text-sm font-medium ${
                   splitMethod === "equal" ? "text-emerald-900" : "text-gray-700"
                 }`}
               >
                 Equal Split
               </div>
+              <div className="text-xs text-gray-500 mt-1">Divide equally</div>
             </button>
             <button
               onClick={() => setSplitMethod("manual")}
-              className={`p-4 rounded-lg border-2 transition-all ${
+              disabled={isProcessing}
+              className={`p-4 rounded-xl border-2 transition-all ${
                 splitMethod === "manual"
-                  ? "border-emerald-500 bg-emerald-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
+                  ? "border-emerald-500 bg-emerald-50 shadow-md"
+                  : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+              } disabled:opacity-50`}
             >
               <div
-                className={`w-5 h-5 mx-auto mb-2 flex items-center justify-center ${
+                className={`text-2xl mx-auto mb-2 ${
                   splitMethod === "manual"
                     ? "text-emerald-600"
                     : "text-gray-400"
                 }`}
               >
-                <span className="text-lg">✏️</span>
+                ✏️
               </div>
               <div
-                className={`text-sm ${
+                className={`text-sm font-medium ${
                   splitMethod === "manual"
                     ? "text-emerald-900"
                     : "text-gray-700"
@@ -376,22 +465,25 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
               >
                 Custom
               </div>
+              <div className="text-xs text-gray-500 mt-1">Set amounts</div>
             </button>
           </div>
         </div>
 
         {/* Participants */}
-        <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6 mb-6">
+        <div className="bg-white rounded-xl shadow-sm p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-gray-900">
+            <h2 className="text-gray-900 font-semibold flex items-center gap-2">
+              <span className="text-emerald-600">👥</span>
               Participants ({participants.length})
             </h2>
             <button
               onClick={addParticipant}
-              className="flex items-center gap-2 text-emerald-600 hover:text-emerald-700"
+              disabled={isProcessing}
+              className="flex items-center gap-2 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
             >
               <Plus className="w-4 h-4" />
-              <span className="text-sm">Add</span>
+              <span className="text-sm font-medium">Add Person</span>
             </button>
           </div>
 
@@ -399,64 +491,103 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
             {participants.map((participant, index) => (
               <div
                 key={participant.id}
-                className="border border-gray-200 rounded-lg p-4"
+                className="border-2 border-gray-200 rounded-xl p-4 hover:border-emerald-200 transition-colors"
               >
                 <div className="flex items-start justify-between mb-3">
-                  <div className="text-gray-700 text-sm">
-                    Person {index + 1}
+                  <div className="flex items-center gap-2">
+                    <div className="bg-gradient-to-br from-emerald-100 to-teal-100 w-8 h-8 rounded-full flex items-center justify-center">
+                      <span className="text-sm font-semibold text-emerald-700">
+                        {index + 1}
+                      </span>
+                    </div>
+                    <span className="text-gray-700 text-sm font-medium">
+                      Person {index + 1}
+                    </span>
                   </div>
                   {participants.length > 1 && (
                     <button
                       onClick={() => removeParticipant(participant.id)}
-                      className="p-1 hover:bg-gray-100 rounded transition-colors"
+                      disabled={isProcessing}
+                      className="p-1.5 hover:bg-red-50 rounded-lg transition-colors group disabled:opacity-50"
                     >
-                      <X className="w-4 h-4 text-gray-400" />
+                      <X className="w-4 h-4 text-gray-400 group-hover:text-red-500" />
                     </button>
                   )}
                 </div>
 
                 <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={participant.name}
-                    onChange={(e) =>
-                      updateParticipant(participant.id, "name", e.target.value)
-                    }
-                    placeholder="Name"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-sm"
-                  />
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-gray-600 text-xs font-medium">
+                        NAME *
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      value={participant.name}
+                      onChange={(e) =>
+                        updateParticipant(
+                          participant.id,
+                          "name",
+                          e.target.value,
+                        )
+                      }
+                      placeholder="John Doe"
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm transition-all"
+                      disabled={isProcessing}
+                    />
+                  </div>
 
-                  <input
-                    type="text"
-                    value={participant.wallet}
-                    onChange={(e) =>
-                      updateParticipant(
-                        participant.id,
-                        "wallet",
-                        e.target.value,
-                      )
-                    }
-                    placeholder="Address"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-sm"
-                  />
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Wallet className="w-3.5 h-3.5 text-gray-500" />
+                      <span className="text-gray-600 text-xs font-medium">
+                        WALLET ADDRESS *
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      value={participant.wallet}
+                      onChange={(e) =>
+                        updateParticipant(
+                          participant.id,
+                          "wallet",
+                          e.target.value,
+                        )
+                      }
+                      placeholder="0x..."
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm font-mono transition-all"
+                      disabled={isProcessing}
+                    />
+                  </div>
 
-                  <input
-                    type="tel"
-                    value={participant.phoneNumber}
-                    onChange={(e) =>
-                      updateParticipant(
-                        participant.id,
-                        "phoneNumber",
-                        e.target.value,
-                      )
-                    }
-                    placeholder="Phone (optional)"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-sm"
-                  />
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Phone className="w-3.5 h-3.5 text-gray-500" />
+                      <span className="text-gray-600 text-xs font-medium">
+                        PHONE (OPTIONAL)
+                      </span>
+                    </div>
+                    <input
+                      type="tel"
+                      value={participant.phoneNumber}
+                      onChange={(e) =>
+                        updateParticipant(
+                          participant.id,
+                          "phoneNumber",
+                          e.target.value,
+                        )
+                      }
+                      placeholder="+1234567890"
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm transition-all"
+                      disabled={isProcessing}
+                    />
+                  </div>
+
                   {splitMethod === "manual" && (
                     <div>
-                      <label className="block text-gray-600 text-sm mb-1">
-                        Amount to pay
+                      <label className="block text-gray-600 text-xs font-medium mb-2">
+                        AMOUNT TO PAY *
                       </label>
                       <input
                         type="number"
@@ -470,17 +601,24 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
                         }
                         placeholder="0.00"
                         step="0.01"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-sm"
+                        min="0"
+                        className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm transition-all"
+                        disabled={isProcessing}
                       />
                     </div>
                   )}
+
                   {splitMethod === "equal" && totalAmount && (
-                    <div className="text-gray-600 text-sm">
-                      Share:{" "}
-                      {(parseFloat(totalAmount) / participants.length).toFixed(
-                        2,
-                      )}{" "}
-                      {currency}
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex items-center justify-between">
+                      <span className="text-emerald-700 text-sm font-medium">
+                        Share amount:
+                      </span>
+                      <span className="text-emerald-900 text-lg font-bold">
+                        {(
+                          parseFloat(totalAmount) / participants.length
+                        ).toFixed(2)}{" "}
+                        {currency}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -489,14 +627,75 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
           </div>
         </div>
 
+        {/* Summary Card */}
+        {totalAmount && (
+          <div className="bg-gradient-to-br from-emerald-500 to-teal-500 rounded-xl p-6 text-white shadow-lg">
+            <h3 className="text-lg font-semibold mb-4">Bill Summary</h3>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span className="opacity-90">Total Amount:</span>
+                <span className="font-bold text-xl">
+                  {parseFloat(totalAmount).toFixed(2)} {currency}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-90">Participants:</span>
+                <span className="font-semibold">
+                  {participants.length} people
+                </span>
+              </div>
+              {splitMethod === "equal" && (
+                <div className="flex justify-between pt-2 border-t border-white/20">
+                  <span className="opacity-90">Per Person:</span>
+                  <span className="font-bold">
+                    {(parseFloat(totalAmount) / participants.length).toFixed(2)}{" "}
+                    {currency}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Create Button */}
-        <button
-          onClick={handleCreate}
-          className="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-4 rounded-xl transition-colors shadow-lg"
-        >
-          Create Bill
-        </button>
+        <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4 -mx-4 sm:-mx-6">
+          <button
+            onClick={handleCreate}
+            disabled={!canSubmit}
+            className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-semibold py-4 rounded-xl transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Creating Bill...
+              </>
+            ) : (
+              <>
+                <CheckCircle className="w-5 h-5" />
+                Create Bill
+              </>
+            )}
+          </button>
+        </div>
       </div>
-    </div>
+
+      {/* Add this to your global CSS for the animation */}
+      <style jsx>{`
+        @keyframes scale-in {
+          from {
+            transform: scale(0.9);
+            opacity: 0;
+          }
+          to {
+            transform: scale(1);
+            opacity: 1;
+          }
+        }
+        .animate-scale-in {
+          animation: scale-in 0.2s ease-out;
+        }
+      `}</style>
+      {/* </div> */}
+    </>
   );
 }
