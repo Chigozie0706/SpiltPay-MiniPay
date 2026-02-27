@@ -1,3 +1,4 @@
+// hooks/use-api-query.ts
 import { useQuery, UseQueryOptions } from "@tanstack/react-query";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
@@ -9,6 +10,7 @@ interface UseApiQueryOptions<TData, TBody = unknown>
   body?: TBody;
   isProtected?: boolean;
   enabled?: boolean;
+  headers?: Record<string, string>; // Add this
 }
 
 export const useApiQuery = <TData, TBody = unknown>(
@@ -20,25 +22,35 @@ export const useApiQuery = <TData, TBody = unknown>(
     body,
     isProtected = false,
     enabled = true,
+    headers = {}, // Add this
     ...queryOptions
   } = options;
 
   return useQuery<TData>({
     ...queryOptions,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    retry: (failureCount, error: any) => {
+      if (error.message?.includes('429') || error.message?.includes('401')) {
+        return false;
+      }
+      return failureCount < 2;
+    },
     queryFn: async () => {
       const response = await fetch(url, {
         method,
         headers: {
-          ...(body && { "Content-Type": "application/json" }),
+          "Content-Type": "application/json",
+          ...headers, // Include custom headers
         },
-        ...(isProtected && {
-          credentials: "include",
-        }),
         ...(body && { body: JSON.stringify(body) }),
       });
 
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `API Error: ${response.status}`);
       }
 
       return response.json();

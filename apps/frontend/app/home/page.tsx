@@ -7,26 +7,29 @@ import { HomeScreen } from "@/components/home-screen";
 
 export default function HomePage() {
   const router = useRouter();
-  const { isSignedIn, isLoading } = useSignIn({
-    autoSignIn: true,
-  });
+  const { isSignedIn, isLoading } = useSignIn();
   const [bills, setBills] = useState([]);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Ensure component is mounted (client-side only)
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Redirect to landing if not signed in
   useEffect(() => {
-    if (!isLoading && !isSignedIn) {
+    if (isMounted && !isLoading && !isSignedIn) {
       router.push("/");
     }
-  }, [isSignedIn, isLoading, router]);
+  }, [isSignedIn, isLoading, router, isMounted]);
 
   const handleSelectBill = (billId: string) => {
     console.log("Selected bill:", billId);
-    // Navigate to bill details
     router.push(`/bill/${billId}`);
   };
 
-  // Show loading while checking auth
-  if (isLoading) {
+  // Show nothing during initial mount to avoid hydration mismatch
+  if (!isMounted || isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -39,13 +42,20 @@ export default function HomePage() {
 
   // Don't render if not signed in (will redirect)
   if (!isSignedIn) {
-    return null;
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Redirecting...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <HomeScreen
       bills={bills}
-      onCreateBill={() => {}} // Not needed anymore
+      onCreateBill={() => {}}
       onSelectBill={handleSelectBill}
     />
   );

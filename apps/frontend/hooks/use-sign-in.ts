@@ -1,29 +1,59 @@
+// hooks/use-sign-in.ts
 import { useMiniApp } from "@/contexts/miniapp-context";
 import sdk from "@farcaster/frame-sdk";
-
 import { NeynarUser } from "@/lib/neynar";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { useApiQuery } from "./use-api-query";
+import { useQueryClient } from "@tanstack/react-query";
 
-export const useSignIn = ({ autoSignIn = false }: { autoSignIn?: boolean }) => {
+// Add this type
+interface AuthCheckResponse {
+  authenticated: boolean;
+  fid?: string;
+}
+
+export const useSignIn = () => {
   const { context } = useMiniApp();
-  const [isSignedIn, setIsSignedIn] = useState(false);
+  const { address } = useAccount();
+  const queryClient = useQueryClient();
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // Load session from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem("session-id");
+    if (stored) {
+      setSessionId(stored);
+    }
+  }, []);
+
+  // Check auth with session ID - Add type here
+  const { data: authData } = useApiQuery<AuthCheckResponse>({
+    url: "/api/auth/check",
+    method: "GET",
+    isProtected: true,
+    queryKey: ["auth-check", sessionId],
+    enabled: !!sessionId,
+    headers: sessionId ? { Authorization: `Bearer ${sessionId}` } : {},
+  });
+
+  const isSignedIn = authData?.authenticated ?? false;
+
+  // Only fetch user if authenticated
   const {
     data: user,
     isLoading: isLoadingNeynarUser,
-    refetch: refetchUser,
   } = useApiQuery<NeynarUser>({
     url: "/api/users/me",
     method: "GET",
     isProtected: true,
     queryKey: ["user"],
-    enabled: !!isSignedIn,
+    enabled: isSignedIn && !!sessionId,
+    headers: sessionId ? { Authorization: `Bearer ${sessionId}` } : {},
   });
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { address } = useAccount();
 
   const handleSignIn = useCallback(async () => {
     try {
@@ -31,18 +61,15 @@ export const useSignIn = ({ autoSignIn = false }: { autoSignIn?: boolean }) => {
       setError(null);
 
       if (!address) {
-        console.error("No wallet connected");
         throw new Error("No wallet connected");
       }
 
       if (!context) {
-        console.error("Not in mini app");
         throw new Error("Not in mini app");
       }
 
       const { token } = await sdk.quickAuth.getToken();
       if (!token) {
-        console.error("Sign in failed, no farcaster token");
         throw new Error("Sign in failed");
       }
 
@@ -59,32 +86,35 @@ export const useSignIn = ({ autoSignIn = false }: { autoSignIn?: boolean }) => {
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        console.error(errorData);
         throw new Error(errorData.message || "Sign in failed");
       }
 
       const data = await res.json();
-      setIsSignedIn(true);
-      refetchUser();
-      return data;
+      console.log("✅ Sign-in response:", data);
+
+      // Store session ID
+      if (data.sessionId) {
+        localStorage.setItem("session-id", data.sessionId);
+        setSessionId(data.sessionId);
+        
+        // Invalidate queries to refetch with new session
+        await queryClient.invalidateQueries();
+      }
+
     } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : "Sign in failed";
+      const errorMessage = err instanceof Error ? err.message : "Sign in failed";
       setError(errorMessage);
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, [refetchUser, address]);
+  }, [address, context, queryClient]);
 
-  useEffect(() => {
-    // if autoSignIn is true, sign in automatically on mount
-    if (autoSignIn && context && address) {
-      if (!isSignedIn) {
-        handleSignIn();
-      }
-    }
-  }, [autoSignIn, handleSignIn, isSignedIn, context, address]);
-
-  return { signIn: handleSignIn, isSignedIn, isLoading, error, user };
+  return {
+    signIn: handleSignIn,
+    isSignedIn,
+    isLoading: isLoading || isLoadingNeynarUser,
+    error,
+    user,
+  };
 };

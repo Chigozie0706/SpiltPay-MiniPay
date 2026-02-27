@@ -1,73 +1,39 @@
-import { Errors, createClient } from "@farcaster/quick-auth";
-
-import { env } from "@/lib/env";
-import * as jose from "jose";
+// app/api/auth/sign-in/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Address, zeroAddress } from "viem";
-import { fetchUser } from "@/lib/neynar";
+import { createSession } from "@/lib/session-store";
 
-export const dynamic = "force-dynamic";
-
-const quickAuthClient = createClient();
-
-export const POST = async (req: NextRequest) => {
-  const { referrerFid, token: farcasterToken } = await req.json();
-  let fid;
-  let isValidSignature;
-  let walletAddress: Address = zeroAddress;
-  let expirationTime = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-  // Verify signature matches custody address and auth address
+export async function POST(request: NextRequest) {
   try {
-    const payload = await quickAuthClient.verifyJwt({
-      domain: new URL(env.NEXT_PUBLIC_URL).hostname,
-      token: farcasterToken,
-    });
-    isValidSignature = !!payload;
-    fid = Number(payload.sub);
-    walletAddress = payload.address as `0x${string}`;
-    expirationTime = payload.exp ?? Date.now() + 7 * 24 * 60 * 60 * 1000;
-  } catch (e) {
-    if (e instanceof Errors.InvalidTokenError) {
-      console.error("Invalid token", e);
-      isValidSignature = false;
-    }
-    console.error("Error verifying token", e);
-  }
+    const body = await request.json();
+    console.log("📦 Sign-in request body:", body);
+    
+    const { token, fid } = body;
 
-  if (!isValidSignature || !fid) {
+    if (!token || !fid) {
+      console.error("❌ Missing token or fid");
+      return NextResponse.json(
+        { error: "Missing token or fid" },
+        { status: 400 }
+      );
+    }
+
+    // Create a session and get session ID
+    const sessionId = createSession(fid.toString());
+
+    console.log("✅ Sign-in successful, created session:", sessionId);
+    
+    return NextResponse.json({ 
+      success: true, 
+      sessionId,
+      fid,
+      message: "Signed in successfully" 
+    });
+    
+  } catch (error) {
+    console.error("❌ Sign-in API error:", error);
     return NextResponse.json(
-      { success: false, error: "Invalid token" },
-      { status: 401 }
+      { error: "Internal server error" },
+      { status: 500 }
     );
   }
-
-  const user = await fetchUser(fid.toString());
-
-  // Generate JWT token
-  const secret = new TextEncoder().encode(env.JWT_SECRET);
-  const token = await new jose.SignJWT({
-    fid,
-    walletAddress,
-    timestamp: Date.now(),
-  })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(expirationTime)
-    .sign(secret);
-
-  // Create the response
-  const response = NextResponse.json({ success: true, user });
-
-  // Set the auth cookie with the JWT token
-  response.cookies.set({
-    name: "auth_token",
-    value: token,
-    httpOnly: true,
-    secure: true,
-    sameSite: "none",
-    maxAge: 7 * 24 * 60 * 60, // 7 days
-    path: "/",
-  });
-
-  return response;
-};
+}

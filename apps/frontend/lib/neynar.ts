@@ -1,4 +1,6 @@
+// lib/neynar.ts
 import { env } from "@/lib/env";
+import { neynarUserCache } from "./cache";
 
 export interface NeynarUser {
   fid: string;
@@ -10,6 +12,15 @@ export interface NeynarUser {
 }
 
 export const fetchUser = async (fid: string): Promise<NeynarUser> => {
+  // Check cache first
+  const cached = neynarUserCache.get(fid);
+  if (cached) {
+    console.log(`✅ Cache hit for user ${fid}`);
+    return cached;
+  }
+
+  console.log(`🔍 Fetching user ${fid} from Neynar API`);
+
   const response = await fetch(
     `https://api.neynar.com/v2/farcaster/user/bulk?fids=${fid}`,
     {
@@ -18,13 +29,25 @@ export const fetchUser = async (fid: string): Promise<NeynarUser> => {
       },
     }
   );
+
   if (!response.ok) {
-    console.error(
-      "Failed to fetch Farcaster user on Neynar",
-      await response.json()
-    );
+    const errorData = await response.json();
+    console.error("Failed to fetch Farcaster user on Neynar", errorData);
+
+    // Check if it's a rate limit error
+    if (errorData.code === "RateLimitExceeded") {
+      throw new Error("RATE_LIMIT_EXCEEDED");
+    }
+
     throw new Error("Failed to fetch Farcaster user on Neynar");
   }
+
   const data = await response.json();
-  return data.users[0];
+  const user = data.users[0];
+
+  // Cache the result
+  neynarUserCache.set(fid, user);
+  console.log(`💾 Cached user ${fid}`);
+
+  return user;
 };
