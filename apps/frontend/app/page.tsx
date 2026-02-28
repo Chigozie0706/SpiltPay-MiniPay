@@ -1,6 +1,6 @@
-import App from "@/components/App";
-import { env } from "@/lib/env";
 import { Metadata } from "next";
+import { env } from "@/lib/env";
+import HomeClient from "./HomeClient";
 
 const appUrl = env.NEXT_PUBLIC_URL;
 
@@ -8,23 +8,23 @@ const frame = {
   version: "next",
   imageUrl: `${appUrl}/images/feed.png`,
   button: {
-    title: "Launch App on Celo",
+    title: "Open SplitPay",
     action: {
       type: "launch_frame",
-      name: "Mini-app Starter",
+      name: "SplitPay",
       url: appUrl,
       splashImageUrl: `${appUrl}/images/splash.png`,
-      splashBackgroundColor: "#ffffff",
+      splashBackgroundColor: "#10b981",
     },
   },
 };
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
-    title: "Mini-app Starter",
+    title: "SplitPay",
     openGraph: {
-      title: "Mini-app Starter",
-      description: "A starter for Farcastermini-apps",
+      title: "SplitPay",
+      description: "Split bills with Mento stablecoins on Celo",
     },
     other: {
       "fc:frame": JSON.stringify(frame),
@@ -32,6 +32,6 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default function Home() {
-  return <App />;
+export default function Page() {
+  return <HomeClient />;
 }
