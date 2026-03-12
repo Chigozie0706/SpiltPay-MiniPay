@@ -10,6 +10,7 @@
     "frames": "frames"
   },
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.38.1",
     "@farcaster/auth-client": "^0.3.0",
     "@farcaster/miniapp-sdk": "^0.2.3",
     "@farcaster/miniapp-wagmi-connector": "^1.1.1",

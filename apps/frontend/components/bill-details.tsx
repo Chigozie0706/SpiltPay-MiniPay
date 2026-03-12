@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowLeft, Download, Share2, CheckCircle } from "lucide-react";
+import { useAccount } from "wagmi";
 import { Bill } from "./homepage";
 import { ParticipantCard } from "./participant-card";
 
@@ -17,7 +18,9 @@ export function BillDetails({
   onPayShare,
   onWithdraw,
 }: BillDetailsProps) {
-  const isOrganizer = bill.organizerId === "user1"; // Mock current user
+  const { address } = useAccount();
+  const isOrganizer = bill.organizerId.toLowerCase() === address?.toLowerCase();
+
   const totalCollected = bill.participants.reduce(
     (sum, p) => sum + p.amountPaid,
     0,
@@ -27,8 +30,13 @@ export function BillDetails({
   const progress = (totalCollected / bill.totalAmount) * 100;
 
   const handleShare = () => {
-    // Mock share functionality
-    alert("Share link copied to clipboard!");
+    const url = window.location.href;
+    if (navigator.share) {
+      navigator.share({ title: bill.title, url });
+    } else {
+      navigator.clipboard.writeText(url);
+      alert("Link copied to clipboard!");
+    }
   };
 
   const handleWithdraw = () => {
@@ -36,7 +44,7 @@ export function BillDetails({
       window.confirm(
         `Withdraw ${totalCollected.toFixed(2)} ${
           bill.currency
-        } to your MiniPay wallet?`,
+        } to your wallet?`,
       )
     ) {
       onWithdraw(bill.id);
@@ -100,7 +108,7 @@ export function BillDetails({
               <div className="w-full bg-gray-100 h-3 rounded-full overflow-hidden mb-2">
                 <div
                   className="bg-gradient-to-r from-emerald-500 to-teal-500 h-full transition-all duration-300"
-                  style={{ width: `${progress}%` }}
+                  style={{ width: `${Math.min(progress, 100)}%` }}
                 />
               </div>
               <div className="text-center text-gray-500 text-sm">
@@ -109,28 +117,30 @@ export function BillDetails({
             </>
           )}
 
-          {/* Withdraw Button (Organizer only) */}
-          {isOrganizer && bill.status === "active" && totalCollected > 0 && (
-            <button
-              onClick={handleWithdraw}
-              disabled={!allPaid}
-              className={`w-full mt-6 py-3 rounded-xl transition-colors flex items-center justify-center gap-2 ${
-                allPaid
-                  ? "bg-emerald-500 hover:bg-emerald-600 text-white"
-                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
-              }`}
-            >
-              <Download className="w-5 h-5" />
-              <span>
-                {allPaid ? "Withdraw to Wallet" : "Waiting for all payments"}
-              </span>
-            </button>
+          {/* Withdraw Button — organizer only, bill must be completed */}
+          {isOrganizer &&
+            bill.status === "completed" &&
+            !bill.participants.every((p) => p.amountPaid === 0) && (
+              <button
+                onClick={handleWithdraw}
+                className="w-full mt-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white transition-colors flex items-center justify-center gap-2"
+              >
+                <Download className="w-5 h-5" />
+                <span>Withdraw to Wallet</span>
+              </button>
+            )}
+
+          {/* Waiting message — organizer, bill still active */}
+          {isOrganizer && bill.status === "active" && (
+            <div className="mt-6 py-3 px-4 rounded-xl bg-gray-100 text-gray-500 text-sm text-center">
+              Waiting for all participants to pay before withdrawal
+            </div>
           )}
         </div>
 
         {/* Participants */}
         <div className="mb-6">
-          <h2 className="text-gray-900 mb-4">
+          <h2 className="text-gray-900 font-semibold mb-4">
             Participants ({bill.participants.length})
           </h2>
           <div className="space-y-3">
@@ -140,6 +150,7 @@ export function BillDetails({
                 participant={participant}
                 currency={bill.currency}
                 billStatus={bill.status}
+                currentAddress={address}
                 onPay={() => onPayShare(bill.id, participant.id)}
               />
             ))}

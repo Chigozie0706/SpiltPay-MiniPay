@@ -21,11 +21,6 @@ import {
 import { parseUnits, Address } from "viem";
 import contractABI from "../contract/abi.json";
 
-interface CreateBillProps {
-  onBack: () => void;
-  onCreate: (bill: Omit<Bill, "id" | "createdAt">) => void;
-}
-
 interface ParticipantInput {
   id: string;
   name: string;
@@ -34,24 +29,45 @@ interface ParticipantInput {
   share: number;
 }
 
+interface CreateBillProps {
+  onBack: () => void;
+  onCreate: (bill: Omit<Bill, "id" | "createdAt">) => void;
+  defaultTitle?: string;
+  defaultAmount?: string;
+  defaultParticipants?: ParticipantInput[];
+}
+
 // Mento Stablecoin addresses on Celo Mainnet
 const STABLECOIN_ADDRESSES: Record<Currency, Address> = {
-  cUSD: "0x765DE816845861e75A25fCA122bb6898B8B1282a",
+  cUSDm: "0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b",
   cKES: "0x456a3D042C0DbD3db53D5489e98dFb038553B0d0",
   cREAL: "0xe8537a3d056DA446677B9E9d6c5dB704EaAb4787",
   cEUR: "0xD8763CBa276a3738E6DE85b4b3bF5FDed6D6cA73",
 };
 
-const CONTRACT_ADDRESS: Address = "0x374523992a926751c642cC81159B45A6BB12053f";
+const CONTRACT_ADDRESS: Address = "0xE47aa208f9B59b5857E6c54a5198a9a40F4c90C7";
 
-export function CreateBill({ onBack, onCreate }: CreateBillProps) {
-  const [title, setTitle] = useState("");
-  const [totalAmount, setTotalAmount] = useState("");
-  const [currency, setCurrency] = useState<Currency>("cUSD");
-  const [participants, setParticipants] = useState<ParticipantInput[]>([
-    { id: "1", name: "", phoneNumber: "", wallet: "", share: 0 },
-  ]);
-  const [splitMethod, setSplitMethod] = useState<"equal" | "manual">("equal");
+// ── FIX: destructure ALL props including the new default ones ─────────────────
+export function CreateBill({
+  onBack,
+  onCreate,
+  defaultTitle,
+  defaultAmount,
+  defaultParticipants,
+}: CreateBillProps) {
+  // ── FIX: useState now receives the defaults correctly ─────────────────────
+  const [title, setTitle] = useState(defaultTitle || "");
+  const [totalAmount, setTotalAmount] = useState(defaultAmount || "");
+  const [participants, setParticipants] = useState<ParticipantInput[]>(
+    defaultParticipants || [
+      { id: "1", name: "", phoneNumber: "", wallet: "", share: 0 },
+    ],
+  );
+  const [currency, setCurrency] = useState<Currency>("cUSDm");
+  const [splitMethod, setSplitMethod] = useState<"equal" | "manual">(
+    // If voice agent gave custom shares, start in manual mode
+    defaultParticipants ? "manual" : "equal",
+  );
   const [error, setError] = useState("");
   const [showSuccess, setShowSuccess] = useState(false);
 
@@ -67,6 +83,8 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
     hash,
   });
 
+  const isProcessing = isPending || isConfirming;
+
   const addParticipant = () => {
     setParticipants([
       ...participants,
@@ -80,14 +98,11 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
     ]);
   };
 
-  // Add this function near the top of your component
   const handleBack = () => {
-    // Check if there's unsaved data
     const hasUnsavedData =
       title || totalAmount || participants.some((p) => p.name || p.wallet);
 
     if (hasUnsavedData && !isProcessing) {
-      // Show confirmation dialog
       const confirmed = window.confirm(
         "You have unsaved changes. Are you sure you want to go back?",
       );
@@ -125,7 +140,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
     }
   };
 
-  // Auto-calculate shares when amount or split method changes
   useEffect(() => {
     if (splitMethod === "equal" && totalAmount) {
       calculateShares();
@@ -137,29 +151,23 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
       setError("Please connect your wallet first");
       return false;
     }
-
     if (!title.trim()) {
       setError("Please enter a bill title");
       return false;
     }
-
     if (!totalAmount) {
       setError("Please enter the total amount");
       return false;
     }
-
     const amount = parseFloat(totalAmount);
     if (isNaN(amount) || amount <= 0) {
       setError("Please enter a valid amount greater than 0");
       return false;
     }
-
     if (participants.some((p) => !p.name.trim())) {
       setError("Please enter names for all participants");
       return false;
     }
-
-    // Validate wallet addresses
     for (const p of participants) {
       if (!p.wallet.trim()) {
         setError(`Please enter wallet address for ${p.name}`);
@@ -170,8 +178,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
         return false;
       }
     }
-
-    // Validate shares for manual split
     if (splitMethod === "manual") {
       const totalShares = participants.reduce(
         (sum, p) => sum + (p.share || 0),
@@ -186,20 +192,14 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
         return false;
       }
     }
-
     return true;
   };
 
   const handleCreate = async () => {
     setError("");
-
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     const amount = parseFloat(totalAmount);
-
-    // Calculate shares if not done yet
     let finalParticipants = participants;
     if (splitMethod === "equal") {
       const sharePerPerson = amount / participants.length;
@@ -210,10 +210,8 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
     }
 
     try {
-      // Prepare contract parameters
       const stablecoinAddress = STABLECOIN_ADDRESSES[currency];
       const totalAmountWei = parseUnits(amount.toString(), 18);
-
       const participantsData = finalParticipants.map((p) => ({
         wallet: p.wallet as Address,
         share: parseUnits(p.share.toString(), 18),
@@ -221,7 +219,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
         phoneNumber: p.phoneNumber || "",
       }));
 
-      // Call the contract
       writeContract({
         address: CONTRACT_ADDRESS,
         abi: contractABI.abi,
@@ -234,7 +231,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
     }
   };
 
-  // Handle transaction success
   useEffect(() => {
     if (isSuccess && hash) {
       setShowSuccess(true);
@@ -244,15 +240,12 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
     }
   }, [isSuccess, hash]);
 
-  // Handle write error
   useEffect(() => {
     if (writeError) {
-      const errorMessage = writeError.message || "Transaction failed";
-      setError(errorMessage);
+      setError(writeError.message || "Transaction failed");
     }
   }, [writeError]);
 
-  const isProcessing = isPending || isConfirming;
   const canSubmit =
     title &&
     totalAmount &&
@@ -261,7 +254,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
 
   return (
     <>
-      {/* <div className="min-h-screen bg-gray-50"> */}
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-4">
@@ -355,7 +347,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
             <span className="text-emerald-600">📝</span>
             Bill Details
           </h2>
-
           <div className="space-y-4">
             <div>
               <label className="block text-gray-700 text-sm font-medium mb-2">
@@ -370,7 +361,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
                 disabled={isProcessing}
               />
             </div>
-
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-gray-700 text-sm font-medium mb-2">
@@ -397,7 +387,7 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all bg-white"
                   disabled={isProcessing}
                 >
-                  <option value="cUSD">cUSD 💵</option>
+                  <option value="cUSDm">cUSDm 💵</option>
                   <option value="cKES">cKES 🇰🇪</option>
                   <option value="cREAL">cREAL 🇧🇷</option>
                   <option value="cEUR">cEUR 🇪🇺</option>
@@ -413,7 +403,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
             <span className="text-emerald-600">⚖️</span>
             Split Method
           </h2>
-
           <div className="grid grid-cols-2 gap-4">
             <button
               onClick={() => setSplitMethod("equal")}
@@ -679,7 +668,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
         </div>
       </div>
 
-      {/* Add this to your global CSS for the animation */}
       <style jsx>{`
         @keyframes scale-in {
           from {
@@ -695,7 +683,6 @@ export function CreateBill({ onBack, onCreate }: CreateBillProps) {
           animation: scale-in 0.2s ease-out;
         }
       `}</style>
-      {/* </div> */}
     </>
   );
 }

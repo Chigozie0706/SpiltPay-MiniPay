@@ -6,7 +6,7 @@ import { CreateBill } from "./create-bill";
 import { BillDetails } from "./bill-details";
 import { PayShare } from "./pay-share";
 
-export type Currency = "cUSD" | "cKES" | "cREAL" | "cEUR";
+export type Currency = "cUSDm" | "cKES" | "cREAL" | "cEUR";
 
 export type ParticipantStatus = "pending" | "paid" | "overpaid" | "underpaid";
 
@@ -76,7 +76,7 @@ export default function Homepage() {
       id: "2",
       title: "Uber Ride Home",
       totalAmount: 15.5,
-      currency: "cUSD",
+      currency: "cUSDm",
       organizerId: "user2",
       organizerName: "Sarah",
       status: "active",

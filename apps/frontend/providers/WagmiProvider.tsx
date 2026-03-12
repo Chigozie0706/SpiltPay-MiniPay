@@ -1,15 +1,15 @@
 "use client";
 
 import { createConfig, http, WagmiProvider } from "wagmi";
-import { celo } from "wagmi/chains";
+import { celo, celoSepolia, celoAlfajores } from "wagmi/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import React from "react";
 
 export const config = createConfig({
-  chains: [celo],
+  chains: [celoSepolia],
   transports: {
-    [celo.id]: http(),
+    [celoSepolia.id]: http(),
   },
   connectors: [farcasterMiniApp()],
 });

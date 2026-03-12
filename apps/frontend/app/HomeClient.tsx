@@ -1,93 +1,69 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAccount, useReadContract } from "wagmi";
 import { useRouter } from "next/navigation";
 import { sdk } from "@farcaster/miniapp-sdk";
 import { HomeScreen } from "@/components/home-screen";
 import type { Bill } from "@/components/homepage";
+import contractABI from "../contract/abi.json";
 
-// ── Contract ─────────────────────────────────────────────────────
-const SPLITPAY_ADDRESS = "0xYOUR_CONTRACT_ADDRESS" as `0x${string}`; // TODO: replace
+const SPLITPAY_ADDRESS =
+  "0xE47aa208f9B59b5857E6c54a5198a9a40F4c90C7" as `0x${string}`;
 
-const ABI = [
-  {
-    name: "getUserBills",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "_user", type: "address" }],
-    outputs: [{ name: "", type: "uint256[]" }],
-  },
-  {
-    name: "getBill",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "_billId", type: "uint256" }],
-    outputs: [
-      {
-        name: "",
-        type: "tuple",
-        components: [
-          { name: "id", type: "uint256" },
-          { name: "organizer", type: "address" },
-          { name: "title", type: "string" },
-          { name: "totalAmount", type: "uint256" },
-          { name: "totalCollected", type: "uint256" },
-          { name: "stablecoin", type: "address" },
-          { name: "participantCount", type: "uint256" },
-          { name: "isCompleted", type: "bool" },
-          { name: "isWithdrawn", type: "bool" },
-          { name: "createdAt", type: "uint256" },
-        ],
-      },
-    ],
-  },
-  {
-    name: "getBillStatus",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "_billId", type: "uint256" }],
-    outputs: [
-      { name: "participants", type: "address[]" },
-      { name: "amountsOwed", type: "uint256[]" },
-      { name: "amountsPaid", type: "uint256[]" },
-      { name: "paymentStatus", type: "bool[]" },
-      { name: "names", type: "string[]" },
-      { name: "phoneNumbers", type: "string[]" },
-    ],
-  },
-] as const;
-
-// ── Stablecoin address → currency label ──────────────────────────
 const STABLECOIN: Record<string, Bill["currency"]> = {
-  "0x765DE816845861e75A25fCA122bb6898B8B1282a": "cUSD",
+  "0x765DE816845861e75A25fCA122bb6898B8B1282a": "cUSDm",
   "0x456a3D042C0DbD3db53D5489e98dFb038553B0d0": "cKES",
   "0xe8537a3d056DA446677B9E9d6c5dB704EaAb4787": "cREAL",
 };
 
 const fromWei = (raw: bigint) => Number(raw) / 1e18;
 
-// ── Single bill loader ───────────────────────────────────────────
+type ContractBill = {
+  id: bigint;
+  organizer: `0x${string}`;
+  title: string;
+  totalAmount: bigint;
+  totalCollected: bigint;
+  stablecoin: `0x${string}`;
+  participantCount: bigint;
+  isCompleted: boolean;
+  isWithdrawn: boolean;
+  createdAt: bigint;
+};
+
+type ContractBillStatus = [
+  participants: readonly `0x${string}`[],
+  amountsOwed: readonly bigint[],
+  amountsPaid: readonly bigint[],
+  paymentStatus: readonly boolean[],
+  names: readonly string[],
+  phoneNumbers: readonly string[],
+];
+
 function useBill(billId: bigint | undefined): Bill | null {
   const enabled = !!billId && billId > BigInt(0);
 
-  const { data: billData } = useReadContract({
+  const { data: rawBill } = useReadContract({
     address: SPLITPAY_ADDRESS,
-    abi: ABI,
+    abi: contractABI.abi,
     functionName: "getBill",
     args: billId ? [billId] : undefined,
     query: { enabled },
   });
 
-  const { data: statusData } = useReadContract({
+  const { data: rawStatus } = useReadContract({
     address: SPLITPAY_ADDRESS,
-    abi: ABI,
+    abi: contractABI.abi,
     functionName: "getBillStatus",
     args: billId ? [billId] : undefined,
     query: { enabled },
   });
 
-  if (!billData || !statusData) return null;
+  if (!rawBill || !rawStatus) return null;
+
+  const billData = rawBill as unknown as ContractBill;
+  const statusData = rawStatus as unknown as ContractBillStatus;
 
   const [addrs, amountsOwed, amountsPaid, , names, phoneNumbers] = statusData;
 
@@ -122,26 +98,27 @@ function useBill(billId: bigint | undefined): Bill | null {
   };
 }
 
-// ── Main ──────────────────────────────────────────────────────────
 export default function HomeClient() {
   const router = useRouter();
   const { address, isConnected } = useAccount();
+  const [mounted, setMounted] = useState(false);
 
-  // Tell Farcaster the app is ready — hides the splash screen
   useEffect(() => {
+    setMounted(true);
     sdk.actions.ready();
   }, []);
 
-  // Get list of bill IDs for this wallet
-  const { data: billIds, isLoading } = useReadContract({
+  const { data: rawBillIds, isLoading } = useReadContract({
     address: SPLITPAY_ADDRESS,
-    abi: ABI,
+    abi: contractABI.abi,
     functionName: "getUserBills",
     args: address ? [address] : undefined,
     query: { enabled: !!address },
   });
 
-  // Load up to 10 bills (hooks can't be in a loop)
+  // Cast getUserBills return value — matches: uint256[]
+  const billIds = rawBillIds as unknown as bigint[] | undefined;
+
   const b0 = useBill(billIds?.[0]);
   const b1 = useBill(billIds?.[1]);
   const b2 = useBill(billIds?.[2]);
@@ -156,9 +133,10 @@ export default function HomeClient() {
   const bills = [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]
     .slice(0, billIds?.length ?? 0)
     .filter((b): b is Bill => b !== null)
-    .reverse(); // newest first
+    .reverse();
 
-  // Wallet not connected yet
+  if (!mounted) return null;
+
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center">
@@ -181,7 +159,6 @@ export default function HomeClient() {
     );
   }
 
-  // Pass real contract data into your existing HomeScreen UI
   return (
     <HomeScreen
       bills={bills}
