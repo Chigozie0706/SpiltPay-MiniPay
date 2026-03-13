@@ -1,28 +1,37 @@
 // app/api/speak/route.ts
-// Receives text, returns audio stream from ElevenLabs TTS
+// Receives text → returns ElevenLabs TTS audio stream (corrected)
 
-export async function POST(req: Request) {
+import { NextRequest, NextResponse } from "next/server";
+
+const VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"; // ElevenLabs "George" - clear, natural voice
+// Change to any voice ID from your ElevenLabs account
+
+export async function POST(req: NextRequest) {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+
+  if (!apiKey) {
+    return NextResponse.json({ error: "API key not configured" }, { status: 500 });
+  }
+
   try {
     const { text } = await req.json();
 
     if (!text) {
-      return Response.json({ error: "No text provided" }, { status: 400 });
+      return NextResponse.json({ error: "No text provided" }, { status: 400 });
     }
 
-    const voiceId =
-      process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Rachel (default)
-
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
       {
         method: "POST",
         headers: {
-          "xi-api-key": process.env.ELEVENLABS_API_KEY!,
+          "xi-api-key": apiKey,
           "Content-Type": "application/json",
+          Accept: "audio/mpeg",
         },
         body: JSON.stringify({
           text,
-          model_id: "eleven_monolingual_v1",
+          model_id: "eleven_turbo_v2_5", // lowest latency — best for voice agent use
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
@@ -32,21 +41,22 @@ export async function POST(req: Request) {
     );
 
     if (!response.ok) {
-      const err = await response.text();
-      console.error("ElevenLabs TTS error:", err);
-      return Response.json({ error: "Speech synthesis failed" }, { status: 500 });
+      const error = await response.text();
+      console.error("TTS error:", error);
+      return NextResponse.json({ error: "TTS failed" }, { status: 500 });
     }
 
-    // Stream audio back to client
+    // Stream the audio back to the client
     const audioBuffer = await response.arrayBuffer();
-    return new Response(audioBuffer, {
+
+    return new NextResponse(audioBuffer, {
       headers: {
         "Content-Type": "audio/mpeg",
-        "Cache-Control": "no-cache",
+        "Content-Length": audioBuffer.byteLength.toString(),
       },
     });
   } catch (err) {
     console.error("Speak route error:", err);
-    return Response.json({ error: "Server error" }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

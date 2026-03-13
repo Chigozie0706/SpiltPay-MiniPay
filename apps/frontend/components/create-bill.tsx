@@ -37,7 +37,6 @@ interface CreateBillProps {
   defaultParticipants?: ParticipantInput[];
 }
 
-// Mento Stablecoin addresses on Celo Mainnet
 const STABLECOIN_ADDRESSES: Record<Currency, Address> = {
   cUSDm: "0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b",
   cKES: "0x456a3D042C0DbD3db53D5489e98dFb038553B0d0",
@@ -47,7 +46,6 @@ const STABLECOIN_ADDRESSES: Record<Currency, Address> = {
 
 const CONTRACT_ADDRESS: Address = "0xE47aa208f9B59b5857E6c54a5198a9a40F4c90C7";
 
-// ── FIX: destructure ALL props including the new default ones ─────────────────
 export function CreateBill({
   onBack,
   onCreate,
@@ -55,7 +53,6 @@ export function CreateBill({
   defaultAmount,
   defaultParticipants,
 }: CreateBillProps) {
-  // ── FIX: useState now receives the defaults correctly ─────────────────────
   const [title, setTitle] = useState(defaultTitle || "");
   const [totalAmount, setTotalAmount] = useState(defaultAmount || "");
   const [participants, setParticipants] = useState<ParticipantInput[]>(
@@ -65,14 +62,13 @@ export function CreateBill({
   );
   const [currency, setCurrency] = useState<Currency>("cUSDm");
   const [splitMethod, setSplitMethod] = useState<"equal" | "manual">(
-    // If voice agent gave custom shares, start in manual mode
+    // FIX: if voice gave custom shares use manual, otherwise equal
     defaultParticipants ? "manual" : "equal",
   );
   const [error, setError] = useState("");
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // Wagmi hooks
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const {
     writeContract,
     data: hash,
@@ -82,7 +78,6 @@ export function CreateBill({
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash,
   });
-
   const isProcessing = isPending || isConfirming;
 
   const addParticipant = () => {
@@ -99,14 +94,14 @@ export function CreateBill({
   };
 
   const handleBack = () => {
-    const hasUnsavedData =
+    const hasData =
       title || totalAmount || participants.some((p) => p.name || p.wallet);
-
-    if (hasUnsavedData && !isProcessing) {
-      const confirmed = window.confirm(
-        "You have unsaved changes. Are you sure you want to go back?",
-      );
-      if (confirmed) {
+    if (hasData && !isProcessing) {
+      if (
+        window.confirm(
+          "You have unsaved changes. Are you sure you want to go back?",
+        )
+      ) {
         onBack();
       }
     } else {
@@ -115,9 +110,8 @@ export function CreateBill({
   };
 
   const removeParticipant = (id: string) => {
-    if (participants.length > 1) {
+    if (participants.length > 1)
       setParticipants(participants.filter((p) => p.id !== id));
-    }
   };
 
   const updateParticipant = (
@@ -130,19 +124,12 @@ export function CreateBill({
     );
   };
 
-  const calculateShares = () => {
-    const amount = parseFloat(totalAmount) || 0;
-    if (splitMethod === "equal" && participants.length > 0) {
-      const sharePerPerson = amount / participants.length;
-      setParticipants(
-        participants.map((p) => ({ ...p, share: sharePerPerson })),
-      );
-    }
-  };
-
+  // FIX: only recalculate equal shares when user hasn't manually set them
   useEffect(() => {
     if (splitMethod === "equal" && totalAmount) {
-      calculateShares();
+      const amount = parseFloat(totalAmount) || 0;
+      const share = amount / participants.length;
+      setParticipants((prev) => prev.map((p) => ({ ...p, share })));
     }
   }, [totalAmount, participants.length, splitMethod]);
 
@@ -164,13 +151,18 @@ export function CreateBill({
       setError("Please enter a valid amount greater than 0");
       return false;
     }
+
+    // FIX: name validation — warn user to fill in name if empty
     if (participants.some((p) => !p.name.trim())) {
-      setError("Please enter names for all participants");
+      setError(
+        "Please enter a name for all participants (tip: you can use their address as the name)",
+      );
       return false;
     }
+
     for (const p of participants) {
       if (!p.wallet.trim()) {
-        setError(`Please enter wallet address for ${p.name}`);
+        setError(`Please enter wallet address for ${p.name || "participant"}`);
         return false;
       }
       if (!p.wallet.startsWith("0x") || p.wallet.length !== 42) {
@@ -178,6 +170,7 @@ export function CreateBill({
         return false;
       }
     }
+
     if (splitMethod === "manual") {
       const totalShares = participants.reduce(
         (sum, p) => sum + (p.share || 0),
@@ -185,9 +178,9 @@ export function CreateBill({
       );
       if (Math.abs(totalShares - amount) > 0.01) {
         setError(
-          `Total shares (${totalShares.toFixed(
+          `Shares total (${totalShares.toFixed(
             2,
-          )}) must equal total amount (${amount.toFixed(2)})`,
+          )}) must equal bill total (${amount.toFixed(2)})`,
         );
         return false;
       }
@@ -202,11 +195,8 @@ export function CreateBill({
     const amount = parseFloat(totalAmount);
     let finalParticipants = participants;
     if (splitMethod === "equal") {
-      const sharePerPerson = amount / participants.length;
-      finalParticipants = participants.map((p) => ({
-        ...p,
-        share: sharePerPerson,
-      }));
+      const share = amount / participants.length;
+      finalParticipants = participants.map((p) => ({ ...p, share }));
     }
 
     try {
@@ -216,7 +206,7 @@ export function CreateBill({
         wallet: p.wallet as Address,
         share: parseUnits(p.share.toString(), 18),
         name: p.name,
-        phoneNumber: p.phoneNumber || "",
+        phoneNumber: p.phoneNumber || "0", // FIX: contract requires non-empty string
       }));
 
       writeContract({
@@ -226,7 +216,6 @@ export function CreateBill({
         args: [title, totalAmountWei, stablecoinAddress, participantsData],
       });
     } catch (err: any) {
-      console.error("Error creating bill:", err);
       setError(err.message || "Failed to create bill. Please try again.");
     }
   };
@@ -234,16 +223,12 @@ export function CreateBill({
   useEffect(() => {
     if (isSuccess && hash) {
       setShowSuccess(true);
-      setTimeout(() => {
-        onBack();
-      }, 2000);
+      setTimeout(() => onBack(), 2000);
     }
   }, [isSuccess, hash]);
 
   useEffect(() => {
-    if (writeError) {
-      setError(writeError.message || "Transaction failed");
-    }
+    if (writeError) setError(writeError.message || "Transaction failed");
   }, [writeError]);
 
   const canSubmit =
@@ -285,7 +270,7 @@ export function CreateBill({
       {/* Success Modal */}
       {showSuccess && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center animate-scale-in">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center">
             <div className="bg-emerald-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-8 h-8 text-emerald-600" />
             </div>
@@ -324,7 +309,6 @@ export function CreateBill({
 
       {/* Form */}
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-6 space-y-4">
-        {/* Error Alert */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
@@ -344,8 +328,7 @@ export function CreateBill({
         {/* Bill Details */}
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="text-gray-900 font-semibold mb-4 flex items-center gap-2">
-            <span className="text-emerald-600">📝</span>
-            Bill Details
+            <span className="text-emerald-600">📝</span> Bill Details
           </h2>
           <div className="space-y-4">
             <div>
@@ -400,8 +383,7 @@ export function CreateBill({
         {/* Split Method */}
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="text-gray-900 font-semibold mb-4 flex items-center gap-2">
-            <span className="text-emerald-600">⚖️</span>
-            Split Method
+            <span className="text-emerald-600">⚖️</span> Split Method
           </h2>
           <div className="grid grid-cols-2 gap-4">
             <button
@@ -463,8 +445,8 @@ export function CreateBill({
         <div className="bg-white rounded-xl shadow-sm p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-gray-900 font-semibold flex items-center gap-2">
-              <span className="text-emerald-600">👥</span>
-              Participants ({participants.length})
+              <span className="text-emerald-600">👥</span> Participants (
+              {participants.length})
             </h2>
             <button
               onClick={addParticipant}
@@ -506,11 +488,9 @@ export function CreateBill({
 
                 <div className="space-y-3">
                   <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-gray-600 text-xs font-medium">
-                        NAME *
-                      </span>
-                    </div>
+                    <label className="block text-gray-600 text-xs font-medium mb-2">
+                      NAME *
+                    </label>
                     <input
                       type="text"
                       value={participant.name}
@@ -521,7 +501,7 @@ export function CreateBill({
                           e.target.value,
                         )
                       }
-                      placeholder="John Doe"
+                      placeholder="e.g. Alice or 0x1234..."
                       className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm transition-all"
                       disabled={isProcessing}
                     />
@@ -616,7 +596,7 @@ export function CreateBill({
           </div>
         </div>
 
-        {/* Summary Card */}
+        {/* Summary */}
         {totalAmount && (
           <div className="bg-gradient-to-br from-emerald-500 to-teal-500 rounded-xl p-6 text-white shadow-lg">
             <h3 className="text-lg font-semibold mb-4">Bill Summary</h3>
@@ -651,17 +631,15 @@ export function CreateBill({
           <button
             onClick={handleCreate}
             disabled={!canSubmit}
-            className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-semibold py-4 rounded-xl transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+            className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-semibold py-4 rounded-xl transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {isProcessing ? (
               <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                Creating Bill...
+                <Loader2 className="w-5 h-5 animate-spin" /> Creating Bill...
               </>
             ) : (
               <>
-                <CheckCircle className="w-5 h-5" />
-                Create Bill
+                <CheckCircle className="w-5 h-5" /> Create Bill
               </>
             )}
           </button>

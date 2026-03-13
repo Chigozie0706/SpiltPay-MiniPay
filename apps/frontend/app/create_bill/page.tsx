@@ -6,7 +6,6 @@ import { CreateBill } from "@/components/create-bill";
 import { VoiceSplitAgent } from "@/components/VoiceSplitAgent";
 import { useRouter } from "next/navigation";
 
-// Shape returned by the voice agent
 interface ParsedBill {
   title: string;
   totalAmountDisplay: string;
@@ -21,8 +20,7 @@ interface ParsedBill {
 
 export default function CreateEvent() {
   const router = useRouter();
-
-  // Key trick: increment this to force-remount CreateBill with new default values
+  // formKey forces CreateBill to remount with fresh defaults when voice parses a bill
   const [formKey, setFormKey] = useState(0);
   const [voiceDefaults, setVoiceDefaults] = useState<ParsedBill | null>(null);
 
@@ -30,41 +28,48 @@ export default function CreateEvent() {
     router.push("/");
   }
 
-  function handleCreateBill(bill: Omit<Bill, "id" | "createdAt">): void {
-    // After successful creation, go home
+  function handleCreateBill(_bill: Omit<Bill, "id" | "createdAt">): void {
     router.push("/");
   }
 
-  // When voice agent confirms a bill, pre-fill the form
   function handleBillParsed(parsed: ParsedBill) {
     setVoiceDefaults(parsed);
-    setFormKey((k) => k + 1); // remount CreateBill so it picks up new defaults
+    // Incrementing key forces CreateBill to fully remount with new defaults
+    // instead of trying to reconcile stale state
+    setFormKey((k) => k + 1);
   }
 
+  // Map voice participants → CreateBill's ParticipantInput shape
+  // FIX: use a stable id that doesn't call Date.now() per-item inside map()
+  //      to avoid duplicate ids when the array is mapped rapidly
+  const defaultParticipants = voiceDefaults?.participants.map((p, i) => ({
+    id: `voice-${formKey}-${i}`, // stable: formKey changes once per parse
+    // Show the full address as the name so the user knows who is who.
+    // If it's 0xPENDING the user must fill it in, so leave name blank.
+    name: p.address === "0xPENDING" ? "" : p.address,
+    phoneNumber: "",
+    wallet: p.address === "0xPENDING" ? "" : p.address,
+    share: p.share,
+  }));
+
   return (
-    <>
-      {/* Voice agent sits above the manual form */}
+    // min-h-screen + overflow-y-auto lets the whole page scroll inside Farcaster's WebView
+    <div className="min-h-screen bg-gray-50 overflow-y-auto">
+      {/*
+        VoiceSplitAgent sits ABOVE CreateBill's sticky header intentionally:
+        once the user confirms the voice bill, the form below auto-fills and
+        they can scroll down to review / edit before submitting.
+      */}
       <VoiceSplitAgent onBillParsed={handleBillParsed} />
 
-      {/* 
-        Pass voiceDefaults as props to CreateBill.
-        You'll need to add defaultTitle, defaultAmount, defaultParticipants
-        props to your CreateBill component (see note below).
-      */}
       <CreateBill
         key={formKey}
         onBack={handleBack}
         onCreate={handleCreateBill}
         defaultTitle={voiceDefaults?.title}
         defaultAmount={voiceDefaults?.totalAmount?.toString()}
-        defaultParticipants={voiceDefaults?.participants.map((p) => ({
-          id: Date.now().toString() + Math.random(),
-          name: p.address.slice(0, 6),
-          phoneNumber: "",
-          wallet: p.address === "0xPENDING" ? "" : p.address,
-          share: p.share,
-        }))}
+        defaultParticipants={defaultParticipants}
       />
-    </>
+    </div>
   );
 }

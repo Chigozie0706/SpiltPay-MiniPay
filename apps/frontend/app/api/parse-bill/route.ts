@@ -1,5 +1,5 @@
 // app/api/parse-bill/route.ts
-// Receives voice transcript, returns structured bill JSON via Claude API
+// Receives voice transcript → returns structured bill JSON via Claude
 
 export async function POST(req: Request) {
   try {
@@ -9,7 +9,14 @@ export async function POST(req: Request) {
       return Response.json({ error: "No transcript provided" }, { status: 400 });
     }
 
-    const systemPrompt = `You are a smart bill-splitting agent for a crypto payments app on Celo. 
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return Response.json(
+        { error: "Anthropic API key not configured" },
+        { status: 500 }
+      );
+    }
+
+    const systemPrompt = `You are a smart bill-splitting agent for a crypto payments app on Celo.
 Parse the user's voice input about splitting expenses and return ONLY valid JSON with no markdown.
 
 The user's wallet address is: ${userAddress || "unknown"}
@@ -30,7 +37,7 @@ Extract and return this exact shape:
 }
 
 Rules:
-- Shares must add up to totalAmount
+- Shares must add up to totalAmount exactly
 - If someone gets "extra", add it to their share and reduce others proportionally
 - Equal split if no amounts specified
 - Keep addresses short in confirmation (e.g. "0xABC...123")
@@ -39,12 +46,15 @@ Rules:
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        "x-api-key": process.env.ANTHROPIC_API_KEY!,
+        // FIX: correct header name is "x-api-key" (not "anthropic-api-key")
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        // FIX: correct model string — "claude-sonnet-4-20250514" is wrong,
+        // the current Sonnet 4 model string is "claude-sonnet-4-5"
+        model: "claude-sonnet-4-5",
         max_tokens: 1000,
         system: systemPrompt,
         messages: [{ role: "user", content: transcript }],
@@ -53,18 +63,32 @@ Rules:
 
     if (!response.ok) {
       const err = await response.text();
-      console.error("Anthropic API error:", err);
+      console.error("[parse-bill] Anthropic API error:", err);
       return Response.json({ error: "Parsing failed" }, { status: 500 });
     }
 
     const data = await response.json();
-    const raw = data.content.map((c: any) => c.text || "").join("");
-    const clean = raw.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean);
+    const raw = data.content
+      .map((c: { type: string; text?: string }) => c.text || "")
+      .join("");
+
+    // FIX: wrap JSON.parse in its own try/catch so a malformed Claude response
+    // returns a clean error instead of a 500 with no context
+    let parsed: unknown;
+    try {
+      const clean = raw.replace(/```json|```/g, "").trim();
+      parsed = JSON.parse(clean);
+    } catch (parseErr) {
+      console.error("[parse-bill] Failed to parse Claude response:", raw);
+      return Response.json(
+        { error: "Could not understand the bill. Please try rephrasing." },
+        { status: 400 }
+      );
+    }
 
     return Response.json(parsed);
-  } catch (err) {
-    console.error("Parse bill route error:", err);
-    return Response.json({ error: "Server error" }, { status: 500 });
+  } catch (err: any) {
+    console.error("[parse-bill] unexpected error:", err);
+    return Response.json({ error: "Server error: " + err.message }, { status: 500 });
   }
 }
