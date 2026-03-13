@@ -1,5 +1,5 @@
 // app/api/parse-bill/route.ts
-// Receives voice transcript → returns structured bill JSON via Claude
+// Receives voice transcript → returns structured bill JSON via Google Gemini
 
 export async function POST(req: Request) {
   try {
@@ -9,9 +9,9 @@ export async function POST(req: Request) {
       return Response.json({ error: "No transcript provided" }, { status: 400 });
     }
 
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
       return Response.json(
-        { error: "Anthropic API key not configured" },
+        { error: "Gemini API key not configured" },
         { status: 500 }
       );
     }
@@ -33,53 +33,59 @@ Extract and return this exact shape:
       "share": number in dollars
     }
   ],
-  "confirmation": "natural spoken confirmation sentence (e.g. Got it! 0xABC owes $40 and you owe $40. Should I create this bill?)"
+  "confirmation": "natural spoken confirmation sentence (e.g. Got it! splitting $90 three ways at $30 each. Should I create this bill?)"
 }
 
 Rules:
 - Shares must add up to totalAmount exactly
-- If someone gets "extra", add it to their share and reduce others proportionally
+- If someone gets extra, add it to their share and reduce others proportionally
 - Equal split if no amounts specified
-- Keep addresses short in confirmation (e.g. "0xABC...123")
+- Keep addresses short in confirmation (e.g. 0xABC...123)
 - Return ONLY JSON, no explanation, no markdown fences`;
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        // FIX: correct header name is "x-api-key" (not "anthropic-api-key")
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        // FIX: correct model string — "claude-sonnet-4-20250514" is wrong,
-        // the current Sonnet 4 model string is "claude-sonnet-4-5"
-        model: "claude-sonnet-4-5",
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: [{ role: "user", content: transcript }],
-      }),
-    });
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: transcript }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1000,
+          },
+        }),
+      }
+    );
 
     if (!response.ok) {
       const err = await response.text();
-      console.error("[parse-bill] Anthropic API error:", err);
+      console.error("[parse-bill] Gemini API error:", err);
       return Response.json({ error: "Parsing failed" }, { status: 500 });
     }
 
     const data = await response.json();
-    const raw = data.content
-      .map((c: { type: string; text?: string }) => c.text || "")
-      .join("");
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-    // FIX: wrap JSON.parse in its own try/catch so a malformed Claude response
-    // returns a clean error instead of a 500 with no context
+    if (!raw) {
+      console.error("[parse-bill] Empty Gemini response:", data);
+      return Response.json({ error: "Empty response from AI" }, { status: 500 });
+    }
+
     let parsed: unknown;
     try {
       const clean = raw.replace(/```json|```/g, "").trim();
       parsed = JSON.parse(clean);
-    } catch (parseErr) {
-      console.error("[parse-bill] Failed to parse Claude response:", raw);
+    } catch {
+      console.error("[parse-bill] Failed to parse Gemini response:", raw);
       return Response.json(
         { error: "Could not understand the bill. Please try rephrasing." },
         { status: 400 }
